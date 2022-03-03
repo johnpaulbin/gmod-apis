@@ -3,7 +3,8 @@ import os, glob, random, json
 import requests
 import urllib.parse
 import banana_dev as banana
-from threading import Thread
+import concurrent.futures
+import threading, queue
 
 
 def choose_file():
@@ -23,7 +24,7 @@ def get_verse():
         return bookNAME, verseNUM, verseTEXT
 
 
-def gpt_gen(text=None, length=20, temperature=0.9, topK=50, topP=0.95):
+def gpt_gen(out_queue, text=None, length=20, temperature=0.9, topK=50, topP=0.95):
     model_parameters = {
             "text": text,
             "length": length,
@@ -31,7 +32,8 @@ def gpt_gen(text=None, length=20, temperature=0.9, topK=50, topP=0.95):
             "topK": topK,
             "topP": topP
         }
-    return banana.run(api_key, "gptj", model_parameters)["modelOutputs"][0]["output"]
+    out_queue.put(banana.run(api_key, "gptj", model_parameters)["modelOutputs"][0]["output"])
+    #return banana.run(api_key, "gptj", model_parameters)["modelOutputs"][0]["output"]
       
 ###############
 # Flask app!
@@ -71,18 +73,27 @@ def gpt():
         #print(data)
         if int(data["length"]) > 200:
             return 'length too long (200 max)'
-        
-        model_parameters = {
-            "text": data["text"],
-            "length": int(data["length"]),
-            "temperature": float(data["temperature"]),
-            "topK": int(data["topK"]),
-            "topP": float(data["topP"])
-        }
-        #print(model_parameters)
-        out = banana.run(api_key, "gptj", model_parameters)
-        out = out["modelOutputs"][0]["output"]
-        #print(out)
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future = executor.submit(gpt_gen,
+                                    data["text"],
+                                    int(data["length"]),
+                                    float(data["temperature"]),                                                                 int(data["topK"]),
+                                    float(data["topP"]))
+            out = future.result()
+        """
+
+        out_queue=queue.Queue()
+        t1 = threading.Thread(target=gpt_gen, args=(out_queue,
+                                                    data["text"],
+                                                    int(data["length"]),
+                                                    float(data["temperature"]),                                                                 int(data["topK"]),
+                                                    float(data["topP"])))
+        t1.start()
+        t1.join()
+        out = out_queue.get()
+        print(out)
+      
         try:
             return out.split(data["stop"])[0]
         except:
